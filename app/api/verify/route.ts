@@ -7,18 +7,6 @@ import * as os from "os";
 
 const execAsync = promisify(exec);
 
-interface ParameterValue {
-  name: string;
-  value: string;
-  valueType?: "direct" | "validator_reference"; // direct = user input, validator_reference = hash from another validator
-  referenceTo?: string; // validator name if valueType is validator_reference
-}
-
-interface ValidatorParameters {
-  validatorName: string; // e.g., "settings.settings"
-  parameters: ParameterValue[];
-}
-
 interface VerifyRequest {
   repoUrl: string;
   commitHash: string;
@@ -216,55 +204,5 @@ async function extractBuildHashes(repoPath: string): Promise<BuildResult[]> {
   }
 }
 
-/**
- * Normalize expected hashes to a map of validator name -> hash
- */
-function normalizeExpectedHashes(
-  expectedHashes: string[] | Record<string, string>,
-  validators: BuildResult[]
-): Record<string, string> {
-  if (Array.isArray(expectedHashes)) {
-    // Array format - match by index
-    const normalized: Record<string, string> = {};
-    validators.forEach((v, idx) => {
-      if (expectedHashes[idx]) {
-        normalized[v.validator] = expectedHashes[idx];
-      }
-    });
-    return normalized;
-  } else {
-    // Already in object format
-    return expectedHashes;
-  }
-}
-
-/**
- * Apply parameters to a validator's compiled code and calculate the new hash
- */
-async function applyParametersToValidator(
-  compiledCode: string,
-  parameterValues: string[],
-  plutusVersion: "V1" | "V2" | "V3"
-): Promise<{ scriptCbor: string; hash: string }> {
-  try {
-    // Dynamically import MeshSDK to avoid webpack issues
-    const { applyParamsToScript } = await import("@meshsdk/core-csl");
-    const { resolveScriptHash } = await import("@meshsdk/core");
-
-    console.log(`Applying parameters to ${plutusVersion} script...`);
-    console.log(`Parameters:`, parameterValues);
-
-    // Apply parameters with CBOR data type (parameters are already CBOR-encoded)
-    const scriptCbor = applyParamsToScript(compiledCode, parameterValues, "CBOR");
-
-    // Calculate the new script hash
-    const hash = resolveScriptHash(scriptCbor, plutusVersion);
-
-    console.log(`Parameterized hash: ${hash}`);
-
-    return { scriptCbor, hash };
-  } catch (error) {
-    console.error("Failed to apply parameters:", error);
-    throw new Error(`Parameter application failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
+// Note: normalizeExpectedHashes and applyParametersToValidator functions removed
+// All hash comparison and parameterization now happens client-side

@@ -64,8 +64,14 @@ export default function Home() {
   const getParameterType = (schema: any): string => {
     if (!schema) return "unknown";
 
-    // Direct dataType (e.g., "bytes", "integer", "constructor")
+    // Direct dataType (e.g., "bytes", "integer", "constructor", "map")
     if (schema.dataType) {
+      if (schema.dataType === "map") {
+        return "map (CBOR)";
+      }
+      if (schema.dataType === "constructor" || schema.dataType === "list") {
+        return `${schema.dataType} (CBOR)`;
+      }
       return schema.dataType;
     }
 
@@ -89,12 +95,39 @@ export default function Home() {
       return `List<${itemType}>`;
     }
 
+    // Map type
+    if (schema.keys && schema.values) {
+      return "map (CBOR)";
+    }
+
     // Constructor/anyOf type
     if (schema.anyOf && schema.anyOf.length > 0) {
-      return schema.anyOf[0].title || "constructor";
+      return schema.anyOf[0].title || "constructor (CBOR)";
     }
 
     return "unknown";
+  };
+
+  // Helper: Check if a type is complex (requires CBOR input)
+  const isComplexType = (schema: any): boolean => {
+    if (!schema) return false;
+
+    // Direct complex types
+    if (schema.dataType) {
+      return ["map", "constructor", "list"].includes(schema.dataType);
+    }
+
+    // Check if it's a map
+    if (schema.keys && schema.values) {
+      return true;
+    }
+
+    // Check if it's a constructor with fields
+    if (schema.anyOf) {
+      return true;
+    }
+
+    return false;
   };
 
   // Helper: CBOR-encode a hash (28 bytes = 56 hex chars)
@@ -176,10 +209,10 @@ export default function Home() {
       // Try to parse as JSON first
       const parsed = JSON.parse(expectedHashes);
       if (Array.isArray(parsed)) {
-        setParsedExpectedHashes(parsed.filter(Boolean));
+        setParsedExpectedHashes(parsed.filter(Boolean) as string[]);
       } else if (typeof parsed === "object") {
         // Extract values from object
-        setParsedExpectedHashes(Object.values(parsed).filter(Boolean));
+        setParsedExpectedHashes(Object.values(parsed).filter(Boolean) as string[]);
       }
     } catch {
       // Parse as newline-separated or comma-separated
@@ -570,6 +603,12 @@ export default function Home() {
                                       ({getParameterType(param.schema)})
                                     </span>
                                   </label>
+
+                                  {isComplexType(param.schema) && (
+                                    <div className="text-xs text-yellow-400 mb-2">
+                                      ℹ️ Complex type - enter CBOR-encoded hex value
+                                    </div>
+                                  )}
 
                                   <div className="flex items-center gap-2 mb-2">
                                     <label className="flex items-center text-sm text-gray-400">
