@@ -41,10 +41,13 @@ interface ValidatorParams {
 }
 
 export default function Home() {
-  const [repoUrl, setRepoUrl] = useState("https://github.com/easy1staking-com/cardano-recurring-payment");
-  const [commitHash, setCommitHash] = useState("97a8acf9f4bfcc14f63bc93c0feb2afe14dc9872");
-  const [aikenVersion, setAikenVersion] = useState("v1.1.3");
-  const [expectedHashes, setExpectedHashes] = useState("abba");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [commitHash, setCommitHash] = useState("");
+  const [aikenVersion, setAikenVersion] = useState("");
+  const [aikenVersions, setAikenVersions] = useState<string[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [expectedHashes, setExpectedHashes] = useState("");
+  const [parsedExpectedHashes, setParsedExpectedHashes] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "verifying" | "success" | "error">("idle");
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [validatorParams, setValidatorParams] = useState<ValidatorParams>({});
@@ -97,6 +100,65 @@ export default function Home() {
       ),
     }));
   };
+
+  // Effect: Fetch Aiken versions on mount
+  useEffect(() => {
+    const fetchVersions = async () => {
+      setLoadingVersions(true);
+      try {
+        // Fetch from Aiken GitHub releases
+        const response = await fetch("https://api.github.com/repos/aiken-lang/aiken/releases?per_page=50");
+        const releases = await response.json();
+        const versions = releases
+          .map((release: any) => release.tag_name)
+          .filter((tag: string) => tag.startsWith("v")); // Only version tags
+        setAikenVersions(versions);
+        if (versions.length > 0) {
+          setAikenVersion(versions[0]); // Set latest version as default
+        }
+      } catch (error) {
+        console.error("Failed to fetch Aiken versions:", error);
+        // Fallback to some known versions
+        setAikenVersions(["v1.1.3", "v1.1.2", "v1.1.1", "v1.1.0", "v1.0.29"]);
+        setAikenVersion("v1.1.3");
+      } finally {
+        setLoadingVersions(false);
+      }
+    };
+    fetchVersions();
+  }, []);
+
+  // Effect: Parse expected hashes dynamically
+  useEffect(() => {
+    if (!expectedHashes.trim()) {
+      setParsedExpectedHashes([]);
+      return;
+    }
+
+    try {
+      // Try to parse as JSON first
+      const parsed = JSON.parse(expectedHashes);
+      if (Array.isArray(parsed)) {
+        setParsedExpectedHashes(parsed.filter(Boolean));
+      } else if (typeof parsed === "object") {
+        // Extract values from object
+        setParsedExpectedHashes(Object.values(parsed).filter(Boolean));
+      }
+    } catch {
+      // Parse as newline-separated or comma-separated
+      const lines = expectedHashes
+        .split(/[\n,]/)
+        .map(line => {
+          // Handle "validator: hash" format
+          if (line.includes(':')) {
+            return line.split(':')[1]?.trim();
+          }
+          return line.trim();
+        })
+        .filter(Boolean);
+      setParsedExpectedHashes(lines);
+    }
+  }, [expectedHashes]);
 
   // Effect: Recalculate hashes when parameters change (client-side)
   useEffect(() => {
@@ -180,29 +242,8 @@ export default function Home() {
     setVerificationResult(null);
 
     try {
-      // Parse expected hashes (JSON array, object, or newline-separated)
-      let hashes: string[] | Record<string, string>;
-      try {
-        hashes = JSON.parse(expectedHashes);
-      } catch {
-        // Try to parse as "validator: hash" format
-        const lines = expectedHashes.split('\n').map(h => h.trim()).filter(Boolean);
-        if (lines[0]?.includes(':')) {
-          // Named format
-          hashes = Object.fromEntries(
-            lines.map(line => {
-              const [validator, hash] = line.split(':').map(s => s.trim());
-              return [validator, hash];
-            })
-          );
-        } else {
-          // Array format
-          hashes = lines;
-        }
-      }
-
-      // Note: We don't send validatorParameters to the server anymore
-      // Parameters are applied client-side for instant feedback
+      // Note: We don't send expected hashes or parameters to the server
+      // All comparison and parameterization happens client-side for instant feedback
       const response = await fetch('/api/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -210,7 +251,6 @@ export default function Home() {
           repoUrl,
           commitHash,
           aikenVersion,
-          expectedHashes: hashes,
         }),
       });
 
@@ -270,13 +310,25 @@ export default function Home() {
 
         <div>
           <label className="block text-sm font-medium mb-2">Aiken Version</label>
-          <input
-            type="text"
+          <select
             value={aikenVersion}
             onChange={(e) => setAikenVersion(e.target.value)}
-            placeholder="v1.0.0"
+            disabled={loadingVersions}
             className="w-full px-4 py-2 bg-zinc-900 border border-zinc-800 rounded focus:outline-none focus:border-zinc-600"
-          />
+          >
+            {loadingVersions ? (
+              <option>Loading versions...</option>
+            ) : (
+              <>
+                <option value="">Select Aiken version...</option>
+                {aikenVersions.map((version) => (
+                  <option key={version} value={version}>
+                    {version}
+                  </option>
+                ))}
+              </>
+            )}
+          </select>
         </div>
 
         <div>
@@ -318,19 +370,77 @@ export default function Home() {
               </div>
             )}
 
+            {/* Overall verification summary */}
+            {verificationResult.results.length > 0 && parsedExpectedHashes.length > 0 && (
+              (() => {
+                const actualHashes = verificationResult.results.map(r => calculatedHashes[r.validator] || r.actual);
+                const matchedActual = actualHashes.filter(h => parsedExpectedHashes.includes(h));
+                const unmatchedActual = actualHashes.filter(h => !parsedExpectedHashes.includes(h));
+                const unmatchedExpected = parsedExpectedHashes.filter(h => !actualHashes.includes(h));
+                const allMatch = actualHashes.length === parsedExpectedHashes.length && unmatchedActual.length === 0;
+
+                return (
+                  <div className={`p-4 rounded border ${
+                    allMatch
+                      ? "bg-green-950 border-green-800 text-green-200"
+                      : "bg-orange-950 border-orange-800 text-orange-200"
+                  }`}>
+                    <p className="font-bold text-lg mb-2">
+                      {allMatch ? "✅ All Hashes Match!" : "⚠️ Hash Verification Summary"}
+                    </p>
+                    <div className="text-sm space-y-1">
+                      <p>Expected: {parsedExpectedHashes.length} hash(es) | Actual: {actualHashes.length} hash(es)</p>
+                      <p>Matched: {matchedActual.length} | Unmatched Actual: {unmatchedActual.length} | Unmatched Expected: {unmatchedExpected.length}</p>
+
+                      {unmatchedActual.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer font-medium">Unmatched Actual Hashes</summary>
+                          <ul className="ml-4 mt-1 font-mono text-xs">
+                            {unmatchedActual.map((hash, idx) => (
+                              <li key={idx}>• {hash}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+
+                      {unmatchedExpected.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer font-medium">Unmatched Expected Hashes</summary>
+                          <ul className="ml-4 mt-1 font-mono text-xs">
+                            {unmatchedExpected.map((hash, idx) => (
+                              <li key={idx}>• {hash}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()
+            )}
+
             {verificationResult.results.length > 0 && (
               <div className="space-y-2">
                 {verificationResult.results.map((r, idx) => {
                   // Use calculated hash if available (from client-side parameterization)
                   const actualHash = calculatedHashes[r.validator] || r.actual;
                   const isParameterized = calculatedHashes[r.validator] && calculatedHashes[r.validator] !== r.actual;
-                  const matches = r.missing ? null : actualHash === r.expected;
+
+                  // Dynamic comparison: check if this actual hash matches ANY expected hash
+                  const matches = parsedExpectedHashes.length > 0
+                    ? parsedExpectedHashes.includes(actualHash)
+                    : null;
+
+                  // Check if parameters are filled
+                  const params = validatorParams[r.validator] || [];
+                  const hasParameters = r.parameters && r.parameters.length > 0;
+                  const parametersProvided = hasParameters && params.some(p => p.value || p.referenceTo);
 
                   return (
                     <div
                       key={idx}
                       className={`p-4 rounded border ${
-                        r.missing
+                        matches === null
                           ? "bg-gray-900 border-gray-700"
                           : matches
                           ? "bg-green-950 border-green-800"
@@ -347,45 +457,45 @@ export default function Home() {
                           )}
                         </div>
                         <span className="text-2xl">
-                          {r.missing ? "⚠️" : matches ? "✅" : "❌"}
+                          {matches === null ? "⚠️" : matches ? "✅" : "❌"}
                         </span>
                       </div>
                       <div className="space-y-1 text-sm font-mono">
-                        {r.parameters && r.parameters.length > 0 && (
+                        {hasParameters && (
                           <div className="mb-2 pb-2 border-b border-gray-700">
                             <span className="text-yellow-400">🔧 Requires Parameters:</span>
                             <ul className="ml-4 mt-1 text-xs">
-                              {r.parameters.map((param, pidx) => (
+                              {r.parameters!.map((param, pidx) => (
                                 <li key={pidx} className="text-gray-300">
                                   • {param.title || `param${pidx}`} ({param.schema?.dataType || "unknown"})
                                 </li>
                               ))}
                             </ul>
-                            {isParameterized && (
+                            {parametersProvided && isParameterized && (
                               <div className="text-green-400 text-xs mt-1">
                                 ✓ Parameters applied - hash calculated client-side
                               </div>
                             )}
-                            {!isParameterized && (
+                            {hasParameters && !parametersProvided && (
                               <div className="text-yellow-400 text-xs mt-1">
-                                ⚠️ Parameters not applied - showing unparameterized hash
+                                ⚠️ Parameters not provided - showing unparameterized hash
                               </div>
                             )}
                           </div>
                         )}
                         <div>
                           <span className="text-gray-400">Expected:</span>{" "}
-                          <span className={r.missing ? "text-yellow-400" : ""}>
-                            {r.expected}
+                          <span className={matches === null ? "text-yellow-400" : ""}>
+                            {parsedExpectedHashes.length > 0 ? "Any of provided hashes" : "N/A - No hashes provided"}
                           </span>
                         </div>
                         <div>
                           <span className="text-gray-400">Actual:</span> {actualHash}
                           {isParameterized && <span className="text-green-400 ml-2">⚡ Live</span>}
                         </div>
-                        {r.missing && (
+                        {matches === null && (
                           <div className="text-yellow-400 text-xs mt-2">
-                            ⚠️ No expected hash provided for this validator
+                            ⚠️ No expected hashes provided
                           </div>
                         )}
                       </div>

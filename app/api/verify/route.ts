@@ -23,8 +23,8 @@ interface VerifyRequest {
   repoUrl: string;
   commitHash: string;
   aikenVersion: string;
-  expectedHashes: string[] | Record<string, string>; // Support both array and named object
-  validatorParameters?: ValidatorParameters[]; // Optional parameter values
+  // Note: expectedHashes and validatorParameters are no longer used
+  // All comparison and parameterization happens client-side
 }
 
 interface ParameterSchema {
@@ -48,12 +48,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: VerifyRequest = await request.json();
-    const { repoUrl, commitHash, aikenVersion, expectedHashes, validatorParameters } = body;
+    const { repoUrl, commitHash, aikenVersion } = body;
 
     // Validate inputs
-    if (!repoUrl || !commitHash || !aikenVersion || !expectedHashes) {
+    if (!repoUrl || !commitHash || !aikenVersion) {
       return NextResponse.json(
-        { success: false, error: "Missing required fields" },
+        { success: false, error: "Missing required fields (repoUrl, commitHash, aikenVersion)" },
         { status: 400 }
       );
     }
@@ -98,110 +98,29 @@ export async function POST(request: NextRequest) {
     // Extract hashes from build artifacts (grouped by module.name)
     const buildResults = await extractBuildHashes(path.join(tempDir, "repo"));
 
-    // Normalize expected hashes
-    const normalizedExpected = normalizeExpectedHashes(expectedHashes, buildResults);
-
-    // Build a map to store calculated hashes (for validator references)
-    // Pre-populate with all unparameterized hashes so validators can reference each other
-    const calculatedHashes: Record<string, string> = {};
-    for (const buildResult of buildResults) {
-      calculatedHashes[buildResult.validator] = buildResult.hash;
-    }
-
-    console.log("Pre-populated hashes for references:", calculatedHashes);
-
-    // Apply parameters if provided and calculate hashes
-    const results = [];
-    for (const buildResult of buildResults) {
-      let actualHash = buildResult.hash; // Default to unparameterized hash
-      let parameterized = false;
-
-      // Check if this validator has parameter values provided
-      const validatorParams = validatorParameters?.find(
-        vp => vp.validatorName === buildResult.validator
-      );
-
-      console.log(`\nProcessing validator: ${buildResult.validator}`);
-      console.log(`Has params from request:`, validatorParams);
-
-      if (validatorParams && buildResult.parameters && buildResult.parameters.length > 0) {
-        try {
-          // Resolve parameter values (handle validator references)
-          const resolvedParams = validatorParams.parameters.map((param, idx) => {
-            console.log(`  Param ${idx} (${param.name}):`, {
-              value: param.value,
-              valueType: param.valueType,
-              referenceTo: param.referenceTo
-            });
-
-            if (param.valueType === "validator_reference" && param.referenceTo) {
-              // Use the calculated hash of the referenced validator
-              const hash = calculatedHashes[param.referenceTo] || param.value;
-              // CBOR-encode the hash (28 bytes = 56 hex chars → 0x581C prefix + hash)
-              const cborEncodedHash = `581C${hash}`;
-              console.log(`    → Resolved to hash: ${hash} → CBOR-encoded: ${cborEncodedHash}`);
-              return cborEncodedHash;
-            }
-            console.log(`    → Using direct value: ${param.value}`);
-            return param.value;
-          });
-
-          // Apply parameters and calculate new hash
-          const { hash } = await applyParametersToValidator(
-            buildResult.compiledCode,
-            resolvedParams,
-            buildResult.plutusVersion
-          );
-          actualHash = hash;
-          parameterized = true;
-
-          // Store calculated hash for potential references
-          calculatedHashes[buildResult.validator] = hash;
-        } catch (error) {
-          console.error(`Failed to apply parameters to ${buildResult.validator}:`, error);
-          actualHash = "ERROR";
-        }
-      } else {
-        // No parameters applied, store unparameterized hash
-        calculatedHashes[buildResult.validator] = buildResult.hash;
-      }
-
-      const expectedHash = normalizedExpected[buildResult.validator];
-      const hasExpected = expectedHash !== null && expectedHash !== undefined && expectedHash !== "";
-      const requiresParams = buildResult.parameters && buildResult.parameters.length > 0;
-
-      results.push({
-        validator: buildResult.validator,
-        validatorModule: buildResult.validatorModule,
-        validatorName: buildResult.validatorName,
-        purposes: buildResult.purposes,
-        parameters: buildResult.parameters,
-        expected: hasExpected ? expectedHash : "N/A",
-        actual: actualHash || "N/A",
-        matches: hasExpected ? actualHash === expectedHash : null,
-        missing: !hasExpected,
-        requiresParams,
-        parameterized,
-        compiledCode: buildResult.compiledCode, // Include for client-side parameterization
-        plutusVersion: buildResult.plutusVersion, // Include for client-side parameterization
-      });
-    }
-
-    const allMatch = results.every((r) => r.matches === true);
-    const warnings: string[] = [];
-
-    // Warn about validators that require parameters but don't have them
-    results.forEach(r => {
-      if (r.requiresParams && !r.parameterized) {
-        warnings.push(`${r.validator} requires parameters but none were provided`);
-      }
-    });
+    // Build results for client-side processing
+    // Note: No server-side parameterization or hash comparison anymore
+    const results = buildResults.map(buildResult => ({
+      validator: buildResult.validator,
+      validatorModule: buildResult.validatorModule,
+      validatorName: buildResult.validatorName,
+      purposes: buildResult.purposes,
+      parameters: buildResult.parameters,
+      expected: "N/A", // Not used anymore, client handles comparison
+      actual: buildResult.hash,
+      matches: null, // Not used anymore, client handles comparison
+      missing: false, // Not used anymore, client handles comparison
+      requiresParams: buildResult.parameters && buildResult.parameters.length > 0,
+      parameterized: false, // Client handles parameterization
+      compiledCode: buildResult.compiledCode, // Include for client-side parameterization
+      plutusVersion: buildResult.plutusVersion, // Include for client-side parameterization
+    }));
 
     return NextResponse.json({
-      success: allMatch,
+      success: true, // Always true, client determines actual success
       results,
       buildLog: buildOutput,
-      warnings,
+      warnings: [], // No warnings from server
     });
   } catch (error) {
     console.error("Verification error:", error);
