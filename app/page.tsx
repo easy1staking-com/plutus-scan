@@ -60,6 +60,43 @@ export default function Home() {
            name.includes("script") || name.includes("policy");
   };
 
+  // Helper: Extract a readable type from parameter schema
+  const getParameterType = (schema: any): string => {
+    if (!schema) return "unknown";
+
+    // Direct dataType (e.g., "bytes", "integer", "constructor")
+    if (schema.dataType) {
+      return schema.dataType;
+    }
+
+    // Reference to definition (e.g., "$ref": "#/definitions/PolicyId")
+    if (schema.$ref) {
+      // Extract the type name from the reference
+      // "#/definitions/PolicyId" → "PolicyId"
+      // "#/definitions/cardano~1transaction~1OutputReference" → "OutputReference"
+      const refParts = schema.$ref.split('/');
+      const typeName = refParts[refParts.length - 1];
+      // Clean up URL encoding (~ is encoded as ~1, / as ~0)
+      const cleaned = typeName.replace(/~1/g, '/').replace(/~0/g, '~');
+      // Return just the last part for readability
+      const parts = cleaned.split('/');
+      return parts[parts.length - 1];
+    }
+
+    // List type
+    if (schema.items) {
+      const itemType = getParameterType(schema.items);
+      return `List<${itemType}>`;
+    }
+
+    // Constructor/anyOf type
+    if (schema.anyOf && schema.anyOf.length > 0) {
+      return schema.anyOf[0].title || "constructor";
+    }
+
+    return "unknown";
+  };
+
   // Helper: CBOR-encode a hash (28 bytes = 56 hex chars)
   const cborEncodeHash = (hash: string): string => {
     // Remove any spaces or prefixes
@@ -467,7 +504,7 @@ export default function Home() {
                             <ul className="ml-4 mt-1 text-xs">
                               {r.parameters!.map((param, pidx) => (
                                 <li key={pidx} className="text-gray-300">
-                                  • {param.title || `param${pidx}`} ({param.schema?.dataType || "unknown"})
+                                  • {param.title || `param${pidx}`} ({getParameterType(param.schema)})
                                 </li>
                               ))}
                             </ul>
@@ -530,7 +567,7 @@ export default function Home() {
                                   <label className="block text-sm font-medium">
                                     {param.title || `Parameter ${pidx + 1}`}
                                     <span className="text-gray-500 ml-2 text-xs">
-                                      ({param.schema?.dataType || "unknown"})
+                                      ({getParameterType(param.schema)})
                                     </span>
                                   </label>
 
