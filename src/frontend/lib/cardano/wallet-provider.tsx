@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { BrowserWallet } from '@meshsdk/core';
 import type { WalletContextType } from '../types/wallet';
 
@@ -13,24 +13,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [walletName, setWalletName] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
 
-  // Auto-reconnect on mount if wallet was previously connected
-  useEffect(() => {
-    const preferredWallet = localStorage.getItem('preferredWallet');
-    if (preferredWallet && typeof window !== 'undefined') {
-      // Check if wallet is still available
-      if (window.cardano?.[preferredWallet]) {
-        connectWallet(preferredWallet).catch((error) => {
-          console.log('Auto-reconnect failed:', error);
-          localStorage.removeItem('preferredWallet');
-        });
-      } else {
-        // Wallet no longer available, clear preference
-        localStorage.removeItem('preferredWallet');
-      }
-    }
-  }, []);
-
-  async function connectWallet(walletKey: string): Promise<void> {
+  const connectWallet = useCallback(async (walletKey: string): Promise<void> => {
     if (isConnecting) return;
 
     setIsConnecting(true);
@@ -59,7 +42,24 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }
+  }, [isConnecting]);
+
+  // Auto-reconnect on mount if wallet was previously connected
+  useEffect(() => {
+    const preferredWallet = localStorage.getItem('preferredWallet');
+    if (preferredWallet && typeof window !== 'undefined') {
+      // Check if wallet is still available
+      if (window.cardano?.[preferredWallet]) {
+        connectWallet(preferredWallet).catch((error) => {
+          console.log('Auto-reconnect failed:', error);
+          localStorage.removeItem('preferredWallet');
+        });
+      } else {
+        // Wallet no longer available, clear preference
+        localStorage.removeItem('preferredWallet');
+      }
+    }
+  }, [connectWallet]);
 
   function disconnectWallet(): void {
     setWallet(null);

@@ -36,15 +36,5 @@ export interface CardanoWalletApi {
   isEnabled: () => Promise<boolean>;
 }
 
-declare global {
-  interface Window {
-    cardano?: {
-      eternl?: CardanoWalletApi;
-      nami?: CardanoWalletApi;
-      flint?: CardanoWalletApi;
-      typhon?: CardanoWalletApi;
-      gerowallet?: CardanoWalletApi;
-      [key: string]: CardanoWalletApi | undefined;
-    };
-  }
-}
+// MeshSDK already declares Window.cardano type
+// We don't need to redeclare it here

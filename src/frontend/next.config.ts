@@ -6,6 +6,19 @@ const nextConfig: NextConfig = {
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
+      layers: true,
+    };
+
+    // Add WASM module rules
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: "webassembly/async",
+    });
+
+    // Set output environment to support async/await
+    config.output.environment = {
+      ...config.output.environment,
+      asyncFunction: true,
     };
 
     // Exclude problematic MeshSDK dependencies from webpack bundling
